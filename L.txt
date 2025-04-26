@@ -1,10 +1,1 @@
-SET SERVEROUTPUT ON;
-
-DECLARE
-  v_total NUMBER;
-BEGIN
-  v_total := fnc_valor_total_pedidos_por_estado('São Paulo');
-  DBMS_OUTPUT.PUT_LINE('Valor total: ' || v_total);
-END;
-
-SELECT nome_funcao(parametro) FROM dual;
+como eu faço para rodar e aparecer o resultado depois que compilei?
