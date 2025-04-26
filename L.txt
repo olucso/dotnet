@@ -1,1 +1,211 @@
-como eu faço para rodar e aparecer o resultado depois que compilei?
+-- Ativa saída no console do SQL Developer
+SET SERVEROUTPUT ON;
+
+--------------------------------------------------------------------------------
+-- FUNÇÃO 1: Valor total de pedidos entregues por estado
+--------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fnc_valor_total_pedidos_por_estado(p_uf IN VARCHAR2)
+RETURN NUMBER
+IS
+    v_total NUMBER := 0;
+BEGIN
+    SELECT NVL(SUM(hp.VAL_TOTAL_PEDIDO), 0)
+    INTO v_total
+    FROM historico_pedido hp
+    JOIN endereco_cliente ec ON hp.SEQ_ENDERECO_CLIENTE = ec.SEQ_ENDERECO_CLIENTE
+    JOIN cidade ci ON ec.COD_CIDADE = ci.COD_CIDADE
+    JOIN estado uf ON ci.COD_ESTADO = uf.COD_ESTADO
+    WHERE hp.DAT_ENTREGA IS NOT NULL
+      AND uf.COD_ESTADO = p_uf;
+
+    RETURN v_total;
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN 0;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- FUNÇÃO 2: Quantidade total vendida de um produto
+--------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fnc_qtd_itens_em_pedidos_por_produto(p_cod_produto IN NUMBER)
+RETURN NUMBER
+IS
+    v_qtd NUMBER := 0;
+BEGIN
+    SELECT NVL(SUM(QTD_ITEM), 0)
+    INTO v_qtd
+    FROM item_pedido
+    WHERE COD_PRODUTO = p_cod_produto;
+
+    RETURN v_qtd;
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN 0;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- PROCEDURE 1: Relatório por cliente
+--------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE prc_relatorio_pedidos_por_cliente
+IS
+BEGIN
+    FOR c IN (
+        SELECT cl.COD_CLIENTE,
+               cl.NOM_CLIENTE,
+               NVL(ci.NOM_CIDADE, 'SEM CIDADE') AS NOM_CIDADE
+        FROM cliente cl
+        LEFT JOIN endereco_cliente ec ON cl.COD_CLIENTE = ec.COD_CLIENTE
+        LEFT JOIN cidade ci ON ec.COD_CIDADE = ci.COD_CIDADE
+        GROUP BY cl.COD_CLIENTE, cl.NOM_CLIENTE, ci.NOM_CIDADE
+    ) LOOP
+        DECLARE
+            v_qtd_pedidos NUMBER := 0;
+            v_val_total NUMBER := 0;
+            v_tem_cancelado CHAR(1) := 'N';
+        BEGIN
+            SELECT COUNT(*), NVL(SUM(VAL_TOTAL_PEDIDO), 0)
+            INTO v_qtd_pedidos, v_val_total
+            FROM pedido
+            WHERE COD_CLIENTE = c.COD_CLIENTE;
+
+            SELECT CASE WHEN COUNT(*) > 0 THEN 'S' ELSE 'N' END
+            INTO v_tem_cancelado
+            FROM pedido
+            WHERE COD_CLIENTE = c.COD_CLIENTE
+              AND DAT_CANCELAMENTO IS NOT NULL;
+
+            DBMS_OUTPUT.PUT_LINE('Cliente: ' || c.NOM_CLIENTE);
+            DBMS_OUTPUT.PUT_LINE('Cidade: ' || c.NOM_CIDADE);
+            DBMS_OUTPUT.PUT_LINE('Total de pedidos: ' || v_qtd_pedidos);
+            DBMS_OUTPUT.PUT_LINE('Valor total comprado: R$ ' || v_val_total);
+            IF v_tem_cancelado = 'S' THEN
+                DBMS_OUTPUT.PUT_LINE('Possui pedido cancelado: SIM');
+            ELSE
+                DBMS_OUTPUT.PUT_LINE('Possui pedido cancelado: NÃO');
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('---------------------------------------------------');
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Erro ao processar cliente ' || c.COD_CLIENTE || ': ' || SQLERRM);
+        END;
+    END LOOP;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- PROCEDURE 2: Movimentação de produtos por vendedor
+--------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE prc_movimentacao_produto_por_vendedor
+IS
+BEGIN
+    FOR v IN (SELECT COD_VENDEDOR, NOM_VENDEDOR FROM vendedor)
+    LOOP
+        DBMS_OUTPUT.PUT_LINE('Vendedor: ' || v.NOM_VENDEDOR);
+
+        DECLARE
+            v_count NUMBER := 0;
+        BEGIN
+            SELECT COUNT(*)
+            INTO v_count
+            FROM pedido p
+            JOIN item_pedido ip ON p.COD_PEDIDO = ip.COD_PEDIDO
+            WHERE p.COD_VENDEDOR = v.COD_VENDEDOR;
+
+            IF v_count = 0 THEN
+                DBMS_OUTPUT.PUT_LINE('  Sem vendas registradas.');
+            ELSE
+                FOR prod IN (
+                    SELECT pr.NOM_PRODUTO,
+                           SUM(ip.QTD_ITEM) AS QTD_TOTAL,
+                           SUM(ip.QTD_ITEM * ip.VAL_UNITARIO_ITEM) AS VAL_TOTAL
+                    FROM pedido p
+                    JOIN item_pedido ip ON p.COD_PEDIDO = ip.COD_PEDIDO
+                    JOIN produto pr ON ip.COD_PRODUTO = pr.COD_PRODUTO
+                    WHERE p.COD_VENDEDOR = v.COD_VENDEDOR
+                    GROUP BY pr.NOM_PRODUTO
+                ) LOOP
+                    DBMS_OUTPUT.PUT_LINE('  Produto: ' || prod.NOM_PRODUTO);
+                    DBMS_OUTPUT.PUT_LINE('    Quantidade Vendida: ' || prod.QTD_TOTAL);
+                    DBMS_OUTPUT.PUT_LINE('    Valor Total: R$ ' || prod.VAL_TOTAL);
+                END LOOP;
+            END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('  Erro ao processar vendas do vendedor: ' || SQLERRM);
+        END;
+
+        DBMS_OUTPUT.PUT_LINE('---------------------------------------------------');
+    END LOOP;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- PROCEDURE 3: Análise de vendas por vendedor
+--------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE prc_analise_vendas_por_vendedor(p_cod_vendedor IN NUMBER)
+IS
+BEGIN
+    FOR c IN (
+        SELECT cl.COD_CLIENTE, cl.NOM_CLIENTE
+        FROM cliente cl
+        LEFT JOIN pedido p ON cl.COD_CLIENTE = p.COD_CLIENTE AND p.COD_VENDEDOR = p_cod_vendedor
+        GROUP BY cl.COD_CLIENTE, cl.NOM_CLIENTE
+    ) LOOP
+        BEGIN
+            DBMS_OUTPUT.PUT_LINE('Cliente: ' || NVL(c.NOM_CLIENTE, 'NOME DESCONHECIDO'));
+
+            FOR r IN (
+                SELECT pr.NOM_PRODUTO,
+                       SUM(ip.QTD_ITEM) AS QTD_TOTAL
+                FROM pedido p
+                LEFT JOIN item_pedido ip ON p.COD_PEDIDO = ip.COD_PEDIDO
+                LEFT JOIN produto pr ON ip.COD_PRODUTO = pr.COD_PRODUTO
+                WHERE p.COD_CLIENTE = c.COD_CLIENTE
+                  AND p.COD_VENDEDOR = p_cod_vendedor
+                GROUP BY pr.NOM_PRODUTO
+            ) LOOP
+                IF r.QTD_TOTAL IS NULL THEN
+                    DBMS_OUTPUT.PUT_LINE('  Produto: DESCONHECIDO');
+                    DBMS_OUTPUT.PUT_LINE('  Quantidade: 0');
+                    DBMS_OUTPUT.PUT_LINE('  Perfil: NENHUMA COMPRA REGISTRADA');
+                ELSE
+                    DBMS_OUTPUT.PUT_LINE('  Produto: ' || NVL(r.NOM_PRODUTO, 'DESCONHECIDO'));
+                    DBMS_OUTPUT.PUT_LINE('  Quantidade: ' || r.QTD_TOTAL);
+
+                    IF r.QTD_TOTAL > 50 THEN
+                        DBMS_OUTPUT.PUT_LINE('  Perfil: CLIENTE FIEL');
+                    ELSIF r.QTD_TOTAL BETWEEN 11 AND 50 THEN
+                        DBMS_OUTPUT.PUT_LINE('  Perfil: CLIENTE RECORRENTE');
+                    ELSIF r.QTD_TOTAL BETWEEN 1 AND 10 THEN
+                        DBMS_OUTPUT.PUT_LINE('  Perfil: CLIENTE OCASIONAL');
+                    ELSE
+                        DBMS_OUTPUT.PUT_LINE('  Perfil: NENHUMA COMPRA REGISTRADA');
+                    END IF;
+                END IF;
+            END LOOP;
+
+            DBMS_OUTPUT.PUT_LINE('---------------------------------------------------');
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Erro ao processar cliente ' || c.COD_CLIENTE || ': ' || SQLERRM);
+        END;
+    END LOOP;
+END;
+/
+
+
+
+
+
+
+
+
+SET SERVEROUTPUT ON;
+DECLARE
+    v_valor_total NUMBER;
+BEGIN
+    v_valor_total := fnc_valor_total_pedidos_por_estado('SP');
+    DBMS_OUTPUT.PUT_LINE('Valor total de pedidos entregues em SP: ' || v_valor_total);
+END;
