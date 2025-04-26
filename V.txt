@@ -45,7 +45,42 @@ Parâmetro: p_cod_vendedor NUMBER
 Saída: Exibição via DBMS_OUTPUT
 
 
+CREATE OR REPLACE PROCEDURE prc_movimentacao_produto_por_vendedor
+IS
+BEGIN
+    FOR v IN (SELECT * FROM vendedor) LOOP
+        DBMS_OUTPUT.PUT_LINE('Vendedor: ' || v.nome);
 
+        DECLARE
+            CURSOR c_prod IS
+                SELECT p.nome AS produto, SUM(ip.qtd) AS qtd, SUM(ip.qtd * ip.preco_unitario) AS total
+                FROM pedido pd
+                JOIN item_pedido ip ON pd.id_pedido = ip.id_pedido
+                JOIN produto p ON ip.id_produto = p.id_produto
+                WHERE pd.id_vendedor = v.id_vendedor
+                GROUP BY p.nome;
+
+            v_contador NUMBER := 0;
+        BEGIN
+            FOR prod IN c_prod LOOP
+                DBMS_OUTPUT.PUT_LINE('- Produto: ' || prod.produto || 
+                                     ' | Quantidade: ' || prod.qtd || 
+                                     ' | Total vendido: ' || prod.total);
+                v_contador := v_contador + 1;
+            END LOOP;
+
+            IF v_contador = 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Sem vendas registradas.');
+            END IF;
+
+            DBMS_OUTPUT.PUT_LINE('----------------------------');
+        END;
+    END LOOP;
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Erro: ' || SQLERRM);
+END;
+/
 
 
 
@@ -182,3 +217,37 @@ EXCEPTION
     WHEN OTHERS THEN
         DBMS_OUTPUT.PUT_LINE('Erro na execução da procedure: ' || SQLERRM);
 END;
+
+
+CREATE OR REPLACE PROCEDURE prc_relatorio_pedidos_por_cliente
+IS
+BEGIN
+    FOR rec IN (
+        SELECT c.id_cliente, c.nome, ci.nome AS cidade,
+               COUNT(p.id_pedido) AS qtd_pedidos,
+               SUM(p.valor_total) AS total_comprado,
+               MAX(CASE WHEN p.status = 'Cancelado' THEN 1 ELSE 0 END) AS houve_cancelamento
+        FROM cliente c
+        LEFT JOIN pedido p ON c.id_cliente = p.id_cliente
+        LEFT JOIN endereco_cliente ec ON c.id_cliente = ec.id_cliente
+        LEFT JOIN cidade ci ON ec.id_cidade = ci.id_cidade
+        GROUP BY c.id_cliente, c.nome, ci.nome
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE('Cliente: ' || rec.nome);
+        DBMS_OUTPUT.PUT_LINE('Cidade: ' || NVL(rec.cidade, 'N/D'));
+        DBMS_OUTPUT.PUT_LINE('Quantidade de Pedidos: ' || NVL(rec.qtd_pedidos, 0));
+        DBMS_OUTPUT.PUT_LINE('Valor Total Comprado: ' || NVL(rec.total_comprado, 0));
+        
+        IF rec.houve_cancelamento = 1 THEN
+            DBMS_OUTPUT.PUT_LINE('Houve cancelamento de pedido');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('Nenhum pedido cancelado');
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE('------------------------------');
+    END LOOP;
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Erro ao gerar relatório: ' || SQLERRM);
+END;
+/
