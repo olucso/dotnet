@@ -43,3 +43,142 @@ Saída: Exibição via DBMS_OUTPUT
 Implemente a procedure prc_analise_vendas_por_vendedor, que recebe como parâmetro o código de um vendedor (p_cod_vendedor NUMBER) e apresenta um relatório cruzando informações de clientes, produtos e vendas realizadas por esse vendedor. A procedure deve utilizar JOINs entre as tabelas vendedor, pedido, item_pedido, produto e cliente para obter, para cada cliente atendido pelo vendedor informado: o nome do cliente, o nome do produto adquirido e a quantidade total comprada. Os dados devem ser agrupados por cliente e produto, e exibidos por meio de DBMS_OUTPUT.PUT_LINE. A procedure deve percorrer os clientes utilizando um LOOP, aplicar a estrutura IF/ELSE para classificar o perfil de compra de cada cliente com base na quantidade total adquirida: exiba “CLIENTE FIEL” para clientes que compraram mais de 50 unidades, “CLIENTE RECORRENTE” para aqueles que compraram entre 11 e 50 unidades, “CLIENTE OCASIONAL” para até 10 unidades e “NENHUMA COMPRA REGISTRADA” caso o cliente não tenha efetuado nenhuma compra. Utilize LEFT JOIN para garantir que clientes sem pedidos também sejam considerados na análise. Implemente tratamento de exceções utilizando EXCEPTION para lidar com casos de dados nulos, clientes ou produtos com nome ausente e eventuais erros de execução. Essa procedure permite gerar uma análise personalizada de comportamento de compra por vendedor, sendo útil para estratégias de fidelização e gestão de performance comercial.
 Parâmetro: p_cod_vendedor NUMBER
 Saída: Exibição via DBMS_OUTPUT
+
+
+
+
+
+
+
+
+
+
+SET SERVEROUTPUT ON;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create or replace FUNCTION fnc_media_itens_por_pedido
+RETURN NUMBER IS
+    v_total_itens NUMBER;
+    v_total_pedidos NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO v_total_itens FROM item_pedido;
+    SELECT COUNT(DISTINCT COD_PEDIDO) INTO v_total_pedidos FROM item_pedido;
+
+    IF v_total_pedidos = 0 THEN
+        RETURN 0;
+    ELSE
+        RETURN v_total_itens / v_total_pedidos;
+    END IF;
+
+EXCEPTION
+    WHEN ZERO_DIVIDE THEN
+        DBMS_OUTPUT.PUT_LINE('Não há pedidos cadastrados.');
+        RETURN 0;
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Erro inesperado: ' || SQLERRM);
+        RETURN 0;
+END;
+
+-------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+create or replace FUNCTION fnc_qtd_itens_em_pedidos_por_produto(p_cod_produto IN NUMBER)
+RETURN NUMBER IS
+    v_qtd NUMBER := 0;
+BEGIN
+    SELECT SUM(ip.qtd_item)
+    INTO v_qtd
+    FROM item_pedido ip
+    JOIN pedido p ON p.cod_pedido = ip.cod_pedido
+    WHERE ip.cod_produto = p_cod_produto;
+
+    RETURN v_qtd;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RETURN 0;
+    WHEN OTHERS THEN
+        RETURN -1;
+END;
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+create or replace PROCEDURE prc_relatorio_pedidos_por_cliente IS
+BEGIN
+    FOR rec IN (
+        SELECT c.nom_cliente, ci.nom_cidade,
+               COUNT(hp.cod_pedido) AS qtd_pedidos,
+               SUM(hp.val_total_pedido) AS total,
+               MAX(CASE WHEN hp.dat_cancelamento IS NOT NULL THEN 'SIM' ELSE 'NÃO' END) AS cancelado
+        FROM cliente c
+        LEFT JOIN endereco_cliente ec ON ec.cod_cliente = c.cod_cliente
+        LEFT JOIN cidade ci ON ci.cod_cidade = ec.cod_cidade
+        LEFT JOIN historico_pedido hp ON hp.cod_cliente = c.cod_cliente
+        GROUP BY c.nom_cliente, ci.nom_cidade
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE('Cliente: ' || rec.nom_cliente);
+        DBMS_OUTPUT.PUT_LINE('Cidade: ' || rec.nom_cidade);
+        DBMS_OUTPUT.PUT_LINE('Total de Pedidos: ' || rec.qtd_pedidos);
+        DBMS_OUTPUT.PUT_LINE('Valor Total: R$' || rec.total);
+        DBMS_OUTPUT.PUT_LINE('Cancelou Pedido: ' || rec.cancelado);
+        DBMS_OUTPUT.PUT_LINE('---------------------------');
+    END LOOP;
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Erro ao gerar relatório: ' || SQLERRM);
+END;
+
+EXEC  prc_relatorio_pedidos_por_cliente;
+
+
+------------------------------------------------------------------------------------------------------------------------------
+
+
+create or replace PROCEDURE prc_analise_vendas_por_vendedor(p_cod_vendedor IN NUMBER) IS
+BEGIN
+    FOR reg IN (
+        SELECT c.nom_cliente, pr.nom_produto, SUM(ip.qtd_item) AS qtd_total
+        FROM vendedor v
+        JOIN pedido pe ON pe.cod_vendedor = v.cod_vendedor
+        JOIN cliente c ON c.cod_cliente = pe.cod_cliente
+        LEFT JOIN item_pedido ip ON ip.cod_pedido = pe.cod_pedido
+        LEFT JOIN produto pr ON pr.cod_produto = ip.cod_produto
+        WHERE v.cod_vendedor = p_cod_vendedor
+        GROUP BY c.nom_cliente, pr.nom_produto
+    ) LOOP
+        BEGIN
+            IF reg.qtd_total IS NULL THEN
+                DBMS_OUTPUT.PUT_LINE('Cliente: ' || reg.nom_cliente || ' | Produto: ' || reg.nom_produto || ' | Nenhuma compra registrada');
+            ELSIF reg.qtd_total > 50 THEN
+                DBMS_OUTPUT.PUT_LINE('Cliente: ' || reg.nom_cliente || ' | Produto: ' || reg.nom_produto || ' | Quantidade: ' || reg.qtd_total || ' | Classificação: CLIENTE FIEL');
+            ELSIF reg.qtd_total BETWEEN 11 AND 50 THEN
+                DBMS_OUTPUT.PUT_LINE('Cliente: ' || reg.nom_cliente || ' | Produto: ' || reg.nom_produto || ' | Quantidade: ' || reg.qtd_total || ' | Classificação: CLIENTE RECORRENTE');
+            ELSE
+                DBMS_OUTPUT.PUT_LINE('Cliente: ' || reg.nom_cliente || ' | Produto: ' || reg.nom_produto || ' | Quantidade: ' || reg.qtd_total || ' | Classificação: CLIENTE OCASIONAL');
+            END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Erro ao processar cliente/produto: ' || SQLERRM);
+        END;
+    END LOOP;
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Erro na execução da procedure: ' || SQLERRM);
+END;
